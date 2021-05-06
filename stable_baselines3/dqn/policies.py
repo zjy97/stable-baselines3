@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type
 
 import gym
 import torch as th
@@ -6,6 +6,7 @@ from torch import nn
 
 from stable_baselines3.common.policies import BasePolicy, register_policy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, FlattenExtractor, NatureCNN, create_mlp
+from stable_baselines3.common.type_aliases import Schedule
 
 
 class QNetwork(BasePolicy):
@@ -64,8 +65,8 @@ class QNetwork(BasePolicy):
         action = q_values.argmax(dim=1).reshape(-1)
         return action
 
-    def _get_data(self) -> Dict[str, Any]:
-        data = super()._get_data()
+    def _get_constructor_parameters(self) -> Dict[str, Any]:
+        data = super()._get_constructor_parameters()
 
         data.update(
             dict(
@@ -73,7 +74,6 @@ class QNetwork(BasePolicy):
                 features_dim=self.features_dim,
                 activation_fn=self.activation_fn,
                 features_extractor=self.features_extractor,
-                epsilon=self.epsilon,
             )
         )
         return data
@@ -103,7 +103,7 @@ class DQNPolicy(BasePolicy):
         self,
         observation_space: gym.spaces.Space,
         action_space: gym.spaces.Space,
-        lr_schedule: Callable,
+        lr_schedule: Schedule,
         net_arch: Optional[List[int]] = None,
         activation_fn: Type[nn.Module] = nn.ReLU,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -142,7 +142,7 @@ class DQNPolicy(BasePolicy):
         self.q_net, self.q_net_target = None, None
         self._build(lr_schedule)
 
-    def _build(self, lr_schedule: Callable) -> None:
+    def _build(self, lr_schedule: Schedule) -> None:
         """
         Create the network and the optimizer.
 
@@ -168,8 +168,8 @@ class DQNPolicy(BasePolicy):
     def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         return self.q_net._predict(obs, deterministic=deterministic)
 
-    def _get_data(self) -> Dict[str, Any]:
-        data = super()._get_data()
+    def _get_constructor_parameters(self) -> Dict[str, Any]:
+        data = super()._get_constructor_parameters()
 
         data.update(
             dict(
@@ -210,7 +210,7 @@ class CnnPolicy(DQNPolicy):
         self,
         observation_space: gym.spaces.Space,
         action_space: gym.spaces.Space,
-        lr_schedule: Callable,
+        lr_schedule: Schedule,
         net_arch: Optional[List[int]] = None,
         activation_fn: Type[nn.Module] = nn.ReLU,
         features_extractor_class: Type[BaseFeaturesExtractor] = NatureCNN,

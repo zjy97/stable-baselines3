@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple, Union
 import numpy as np
 import pandas
 import torch as th
+from matplotlib import pyplot as plt
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -26,11 +27,42 @@ DISABLED = 50
 class Video(object):
     """
     Video data class storing the video frames and the frame per seconds
+
+    :param frames: frames to create the video from
+    :param fps: frames per second
     """
 
     def __init__(self, frames: th.Tensor, fps: Union[float, int]):
         self.frames = frames
         self.fps = fps
+
+
+class Figure(object):
+    """
+    Figure data class storing a matplotlib figure and whether to close the figure after logging it
+
+    :param figure: figure to log
+    :param close: if true, close the figure after logging it
+    """
+
+    def __init__(self, figure: plt.figure, close: bool):
+        self.figure = figure
+        self.close = close
+
+
+class Image(object):
+    """
+    Image data class storing an image and data format
+
+    :param image: image to log
+    :param dataformats: Image data format specification of the form NCHW, NHWC, CHW, HWC, HW, WH, etc.
+        More info in add_image method doc at https://pytorch.org/docs/stable/tensorboard.html
+        Gym envs normally use 'HWC' (channel last)
+    """
+
+    def __init__(self, image: Union[th.Tensor, np.ndarray, str], dataformats: str):
+        self.image = image
+        self.dataformats = dataformats
 
 
 class FormatUnsupportedError(NotImplementedError):
@@ -105,10 +137,16 @@ class HumanOutputFormat(KVWriter, SeqWriter):
             if excluded is not None and ("stdout" in excluded or "log" in excluded):
                 continue
 
-            if isinstance(value, Video):
+            elif isinstance(value, Video):
                 raise FormatUnsupportedError(["stdout", "log"], "video")
 
-            if isinstance(value, float):
+            elif isinstance(value, Figure):
+                raise FormatUnsupportedError(["stdout", "log"], "figure")
+
+            elif isinstance(value, Image):
+                raise FormatUnsupportedError(["stdout", "log"], "image")
+
+            elif isinstance(value, float):
                 # Align left
                 value_str = f"{value:<8.3g}"
             else:
@@ -196,6 +234,10 @@ class JSONOutputFormat(KVWriter):
         def cast_to_json_serializable(value: Any):
             if isinstance(value, Video):
                 raise FormatUnsupportedError(["json"], "video")
+            if isinstance(value, Figure):
+                raise FormatUnsupportedError(["json"], "figure")
+            if isinstance(value, Image):
+                raise FormatUnsupportedError(["json"], "image")
             if hasattr(value, "dtype"):
                 if value.shape == () or len(value) == 1:
                     # if value is a dimensionless numpy array or of length 1, serialize as a float
@@ -231,6 +273,7 @@ class CSVOutputFormat(KVWriter):
         self.file = open(filename, "w+t")
         self.keys = []
         self.separator = ","
+        self.quotechar = '"'
 
     def write(self, key_values: Dict[str, Any], key_excluded: Dict[str, Union[str, Tuple[str, ...]]], step: int = 0) -> None:
         # Add our current row to the history
@@ -258,7 +301,20 @@ class CSVOutputFormat(KVWriter):
             if isinstance(value, Video):
                 raise FormatUnsupportedError(["csv"], "video")
 
-            if value is not None:
+            elif isinstance(value, Figure):
+                raise FormatUnsupportedError(["csv"], "figure")
+
+            elif isinstance(value, Image):
+                raise FormatUnsupportedError(["csv"], "image")
+
+            elif isinstance(value, str):
+                # escape quotechars by prepending them with another quotechar
+                value = value.replace(self.quotechar, self.quotechar + self.quotechar)
+
+                # additionally wrap text with quotechars so that any delimiters in the text are ignored by csv readers
+                self.file.write(self.quotechar + value + self.quotechar)
+
+            elif value is not None:
                 self.file.write(str(value))
         self.file.write("\n")
         self.file.flush()
@@ -288,13 +344,23 @@ class TensorBoardOutputFormat(KVWriter):
                 continue
 
             if isinstance(value, np.ScalarType):
-                self.writer.add_scalar(key, value, step)
+                if isinstance(value, str):
+                    # str is considered a np.ScalarType
+                    self.writer.add_text(key, value, step)
+                else:
+                    self.writer.add_scalar(key, value, step)
 
             if isinstance(value, th.Tensor):
                 self.writer.add_histogram(key, value, step)
 
             if isinstance(value, Video):
                 self.writer.add_video(key, value.frames, step, value.fps)
+
+            if isinstance(value, Figure):
+                self.writer.add_figure(key, value.figure, step, close=value.close)
+
+            if isinstance(value, Image):
+                self.writer.add_image(key, value.image, step, dataformats=value.dataformats)
 
         # Flush the output to the file
         self.writer.flush()

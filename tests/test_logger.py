@@ -3,17 +3,24 @@ from typing import Sequence
 import numpy as np
 import pytest
 import torch as th
+from matplotlib import pyplot as plt
 from pandas.errors import EmptyDataError
 
 from stable_baselines3.common.logger import (
     DEBUG,
+    INFO,
+    Figure,
     FormatUnsupportedError,
+    Image,
     ScopedConfigure,
     Video,
     configure,
     debug,
     dump,
     error,
+    get_dir,
+    get_level,
+    get_log_dict,
     info,
     make_output_format,
     read_csv,
@@ -34,6 +41,7 @@ KEY_VALUES = {
     "a": np.array([1, 2, 3]),
     "f": np.array(1),
     "g": np.array([[[1]]]),
+    "h": 'this ", ;is a \n tes:,t',
 }
 
 KEY_EXCLUDED = {}
@@ -101,9 +109,12 @@ def test_main(tmp_path):
     """
     info("hi")
     debug("shouldn't appear")
+    assert get_level() == INFO
     set_level(DEBUG)
+    assert get_level() == DEBUG
     debug("should appear")
     configure(folder=str(tmp_path))
+    assert get_dir() == str(tmp_path)
     record("a", 3)
     record("b", 2.5)
     dump()
@@ -111,6 +122,9 @@ def test_main(tmp_path):
     record("a", 5.5)
     dump()
     info("^^^ should see a = 5.5")
+    record("f", "this text \n \r should appear in one line")
+    dump()
+    info('^^^ should see f = "this text \n \r should appear in one line"')
     record_mean("b", -22.5)
     record_mean("b", -44.4)
     record("a", 5.5)
@@ -128,6 +142,7 @@ def test_main(tmp_path):
     warn("hey")
     error("oh")
     record_dict({"test": 1})
+    assert isinstance(get_log_dict(), dict) and set(get_log_dict().keys()) == {"test"}
 
 
 @pytest.mark.parametrize("_format", ["stdout", "log", "json", "csv", "tensorboard"])
@@ -156,6 +171,7 @@ def test_make_output_fail(tmp_path):
 
 
 @pytest.mark.parametrize("_format", ["stdout", "log", "json", "csv", "tensorboard"])
+@pytest.mark.filterwarnings("ignore:Tried to write empty key-value dict")
 def test_exclude_keys(tmp_path, read_log, _format):
     if _format == "tensorboard":
         # Skip if no tensorboard installed
@@ -196,5 +212,53 @@ def test_report_video_to_unsupported_format_raises_error(tmp_path, unsupported_f
     with pytest.raises(FormatUnsupportedError) as exec_info:
         video = Video(frames=th.rand(1, 20, 3, 16, 16), fps=20)
         writer.write({"video": video}, key_excluded={"video": ()})
+    assert unsupported_format in str(exec_info.value)
+    writer.close()
+
+
+def test_report_image_to_tensorboard(tmp_path, read_log):
+    pytest.importorskip("tensorboard")
+
+    image = Image(image=th.rand(16, 16, 3), dataformats="HWC")
+    writer = make_output_format("tensorboard", tmp_path)
+    writer.write({"image": image}, key_excluded={"image": ()})
+
+    assert not read_log("tensorboard").empty
+    writer.close()
+
+
+@pytest.mark.parametrize("unsupported_format", ["stdout", "log", "json", "csv"])
+def test_report_image_to_unsupported_format_raises_error(tmp_path, unsupported_format):
+    writer = make_output_format(unsupported_format, tmp_path)
+
+    with pytest.raises(FormatUnsupportedError) as exec_info:
+        image = Image(image=th.rand(16, 16, 3), dataformats="HWC")
+        writer.write({"image": image}, key_excluded={"image": ()})
+    assert unsupported_format in str(exec_info.value)
+    writer.close()
+
+
+def test_report_figure_to_tensorboard(tmp_path, read_log):
+    pytest.importorskip("tensorboard")
+
+    fig = plt.figure()
+    fig.add_subplot().plot(np.random.random(3))
+    figure = Figure(figure=fig, close=True)
+    writer = make_output_format("tensorboard", tmp_path)
+    writer.write({"figure": figure}, key_excluded={"figure": ()})
+
+    assert not read_log("tensorboard").empty
+    writer.close()
+
+
+@pytest.mark.parametrize("unsupported_format", ["stdout", "log", "json", "csv"])
+def test_report_figure_to_unsupported_format_raises_error(tmp_path, unsupported_format):
+    writer = make_output_format(unsupported_format, tmp_path)
+
+    with pytest.raises(FormatUnsupportedError) as exec_info:
+        fig = plt.figure()
+        fig.add_subplot().plot(np.random.random(3))
+        figure = Figure(figure=fig, close=True)
+        writer.write({"figure": figure}, key_excluded={"figure": ()})
     assert unsupported_format in str(exec_info.value)
     writer.close()

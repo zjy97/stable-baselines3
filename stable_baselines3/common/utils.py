@@ -3,7 +3,7 @@ import os
 import random
 from collections import deque
 from itertools import zip_longest
-from typing import Callable, Iterable, Optional, Union
+from typing import Iterable, Optional, Union
 
 import gym
 import numpy as np
@@ -16,12 +16,13 @@ except ImportError:
     SummaryWriter = None
 
 from stable_baselines3.common import logger
-from stable_baselines3.common.type_aliases import GymEnv
+from stable_baselines3.common.type_aliases import GymEnv, Schedule, TrainFreq, TrainFrequencyUnit
 
 
 def set_random_seed(seed: int, using_cuda: bool = False) -> None:
     """
-    Seed the different random generators
+    Seed the different random generators.
+
     :param seed:
     :param using_cuda:
     """
@@ -70,7 +71,7 @@ def update_learning_rate(optimizer: th.optim.Optimizer, learning_rate: float) ->
         param_group["lr"] = learning_rate
 
 
-def get_schedule_fn(value_schedule: Union[Callable, float]) -> Callable:
+def get_schedule_fn(value_schedule: Union[Schedule, float, int]) -> Schedule:
     """
     Transform (if needed) learning rate and clip range (for PPO)
     to callable.
@@ -88,7 +89,7 @@ def get_schedule_fn(value_schedule: Union[Callable, float]) -> Callable:
     return value_schedule
 
 
-def get_linear_fn(start: float, end: float, end_fraction: float) -> Callable:
+def get_linear_fn(start: float, end: float, end_fraction: float) -> Schedule:
     """
     Create a function that interpolates linearly between start and end
     between ``progress_remaining`` = 1 and ``progress_remaining`` = ``end_fraction``.
@@ -112,7 +113,7 @@ def get_linear_fn(start: float, end: float, end_fraction: float) -> Callable:
     return func
 
 
-def constant_fn(val: float) -> Callable:
+def constant_fn(val: float) -> Schedule:
     """
     Create a function that returns a constant
     It is useful for learning rate schedule (to avoid code duplication)
@@ -317,3 +318,31 @@ def polyak_update(params: Iterable[th.nn.Parameter], target_params: Iterable[th.
         for param, target_param in zip_strict(params, target_params):
             target_param.data.mul_(1 - tau)
             th.add(target_param.data, param.data, alpha=tau, out=target_param.data)
+
+
+def should_collect_more_steps(
+    train_freq: TrainFreq,
+    num_collected_steps: int,
+    num_collected_episodes: int,
+) -> bool:
+    """
+    Helper used in ``collect_rollouts()`` of off-policy algorithms
+    to determine the termination condition.
+
+    :param train_freq: How much experience should be collected before updating the policy.
+    :param num_collected_steps: The number of already collected steps.
+    :param num_collected_episodes: The number of already collected episodes.
+    :return: Whether to continue or not collecting experience
+        by doing rollouts of the current policy.
+    """
+    if train_freq.unit == TrainFrequencyUnit.STEP:
+        return num_collected_steps < train_freq.frequency
+
+    elif train_freq.unit == TrainFrequencyUnit.EPISODE:
+        return num_collected_episodes < train_freq.frequency
+
+    else:
+        raise ValueError(
+            "The unit of the `train_freq` must be either TrainFrequencyUnit.STEP "
+            f"or TrainFrequencyUnit.EPISODE not '{train_freq.unit}'!"
+        )

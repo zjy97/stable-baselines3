@@ -17,7 +17,7 @@ TL;DR
 
 1. Read about RL and Stable Baselines3
 2. Do quantitative experiments and hyperparameter tuning if needed
-3. Evaluate the performance using a separate test environment
+3. Evaluate the performance using a separate test environment (remember to check wrappers!)
 4. For better performance, increase the training budget
 
 
@@ -68,18 +68,22 @@ Other method, like ``TRPO`` or ``PPO`` make use of a *trust region* to minimize 
 How to evaluate an RL algorithm?
 --------------------------------
 
+.. note::
+
+  Pay attention to environment wrappers when evaluating your agent and comparing results to others' results. Modifications to episode rewards
+  or lengths may also affect evaluation results which may not be desirable. Check ``evaluate_policy`` helper function in :ref:`Evaluation Helper <eval>` section.
+
 Because most algorithms use exploration noise during training, you need a separate test environment to evaluate the performance
 of your agent at a given time. It is recommended to periodically evaluate your agent for ``n`` test episodes (``n`` is usually between 5 and 20)
 and average the reward per episode to have a good estimate.
 
-As some policy are stochastic by default (e.g. A2C or PPO), you should also try to set `deterministic=True` when calling the `.predict()` method,
-this frequently leads to better performance.
-Looking at the training curve (episode reward function of the timesteps) is a good proxy but underestimates the agent true performance.
-
-
 .. note::
 
 	We provide an ``EvalCallback`` for doing such evaluation. You can read more about it in the :ref:`Callbacks <callbacks>` section.
+
+As some policy are stochastic by default (e.g. A2C or PPO), you should also try to set `deterministic=True` when calling the `.predict()` method,
+this frequently leads to better performance.
+Looking at the training curve (episode reward function of the timesteps) is a good proxy but underestimates the agent true performance.
 
 
 
@@ -115,13 +119,14 @@ Discrete Actions
 Discrete Actions - Single Process
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-DQN with extensions (double DQN, prioritized replay, ...) are the recommended algorithms.
-DQN is usually slower to train (regarding wall clock time) but is the most sample efficient (because of its replay buffer).
+``DQN`` with extensions (double DQN, prioritized replay, ...) are the recommended algorithms.
+We notably provide ``QR-DQN`` in our :ref:`contrib repo <sb3_contrib>`.
+``DQN`` is usually slower to train (regarding wall clock time) but is the most sample efficient (because of its replay buffer).
 
 Discrete Actions - Multiprocessed
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-You should give a try to PPO or A2C.
+You should give a try to ``PPO`` or ``A2C``.
 
 
 Continuous Actions
@@ -130,14 +135,14 @@ Continuous Actions
 Continuous Actions - Single Process
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Current State Of The Art (SOTA) algorithms are ``SAC`` and ``TD3``.
+Current State Of The Art (SOTA) algorithms are ``SAC``, ``TD3`` and ``TQC`` (available in our :ref:`contrib repo <sb3_contrib>`).
 Please use the hyperparameters in the `RL zoo <https://github.com/DLR-RM/rl-baselines3-zoo>`_ for best results.
 
 
 Continuous Actions - Multiprocessed
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Take a look at PPO, TRPO or A2C. Again, don't forget to take the hyperparameters from the `RL zoo <https://github.com/DLR-RM/rl-baselines3-zoo>`_
+Take a look at ``PPO`` or ``A2C``. Again, don't forget to take the hyperparameters from the `RL zoo <https://github.com/DLR-RM/rl-baselines3-zoo>`_
 for continuous actions problems (cf *Bullet* envs).
 
 .. note::
@@ -150,12 +155,12 @@ Goal Environment
 -----------------
 
 If your environment follows the ``GoalEnv`` interface (cf :ref:`HER <her>`), then you should use
-HER + (SAC/TD3/DDPG/DQN) depending on the action space.
+HER + (SAC/TD3/DDPG/DQN/QR-DQN/TQC) depending on the action space.
 
 
 .. note::
 
-	The number of workers is an important hyperparameters for experiments with HER
+	The ``batch_size`` is an important hyperparameter for experiments with :ref:`HER <her>`
 
 
 

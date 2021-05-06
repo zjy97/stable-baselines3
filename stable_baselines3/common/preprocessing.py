@@ -1,9 +1,27 @@
+import warnings
 from typing import Tuple
 
 import numpy as np
 import torch as th
 from gym import spaces
 from torch.nn import functional as F
+
+
+def is_image_space_channels_first(observation_space: spaces.Box) -> bool:
+    """
+    Check if an image observation space (see ``is_image_space``)
+    is channels-first (CxHxW, True) or channels-last (HxWxC, False).
+
+    Use a heuristic that channel dimension is the smallest of the three.
+    If second dimension is smallest, raise an exception (no support).
+
+    :param observation_space:
+    :return: True if observation space is channels-first image, False if channels-last.
+    """
+    smallest_dimension = np.argmin(observation_space.shape).item()
+    if smallest_dimension == 1:
+        warnings.warn("Treating image space as channels-last, while second dimension was smallest of the three.")
+    return smallest_dimension == 0
 
 
 def is_image_space(observation_space: spaces.Space, channels_last: bool = True, check_channels: bool = False) -> bool:
@@ -41,6 +59,26 @@ def is_image_space(observation_space: spaces.Space, channels_last: bool = True, 
         # RGB, RGBD, GrayScale
         return n_channels in [1, 3, 4]
     return False
+
+
+def maybe_transpose(observation: np.ndarray, observation_space: spaces.Space) -> np.ndarray:
+    """
+    Handle the different cases for images as PyTorch use channel first format.
+
+    :param observation:
+    :param observation_space:
+    :return: channel first observation if observation is an image
+    """
+    # Avoid circular import
+    from stable_baselines3.common.vec_env import VecTransposeImage
+
+    if is_image_space(observation_space):
+        if not (observation.shape == observation_space.shape or observation.shape[1:] == observation_space.shape):
+            # Try to re-order the channels
+            transpose_obs = VecTransposeImage.transpose_image(observation)
+            if transpose_obs.shape == observation_space.shape or transpose_obs.shape[1:] == observation_space.shape:
+                observation = transpose_obs
+    return observation
 
 
 def preprocess_obs(obs: th.Tensor, observation_space: spaces.Space, normalize_images: bool = True) -> th.Tensor:

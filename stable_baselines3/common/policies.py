@@ -3,7 +3,7 @@
 import collections
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import gym
 import numpy as np
@@ -19,10 +19,10 @@ from stable_baselines3.common.distributions import (
     StateDependentNoiseDistribution,
     make_proba_distribution,
 )
-from stable_baselines3.common.preprocessing import get_action_dim, is_image_space, preprocess_obs
+from stable_baselines3.common.preprocessing import get_action_dim, maybe_transpose, preprocess_obs
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, FlattenExtractor, MlpExtractor, NatureCNN, create_mlp
+from stable_baselines3.common.type_aliases import Schedule
 from stable_baselines3.common.utils import get_device, is_vectorized_observation
-from stable_baselines3.common.vec_env import VecTransposeImage
 from stable_baselines3.common.vec_env.obs_dict_wrapper import ObsDictWrapper
 
 
@@ -81,7 +81,7 @@ class BaseModel(nn.Module, ABC):
 
     @abstractmethod
     def forward(self, *args, **kwargs):
-        del args, kwargs
+        pass
 
     def _update_features_extractor(
         self, net_kwargs: Dict[str, Any], features_extractor: Optional[BaseFeaturesExtractor] = None
@@ -104,7 +104,7 @@ class BaseModel(nn.Module, ABC):
         return net_kwargs
 
     def make_features_extractor(self) -> BaseFeaturesExtractor:
-        """ Helper method to create a features extractor."""
+        """Helper method to create a features extractor."""
         return self.features_extractor_class(self.observation_space, **self.features_extractor_kwargs)
 
     def extract_features(self, obs: th.Tensor) -> th.Tensor:
@@ -118,12 +118,11 @@ class BaseModel(nn.Module, ABC):
         preprocessed_obs = preprocess_obs(obs, self.observation_space, normalize_images=self.normalize_images)
         return self.features_extractor(preprocessed_obs)
 
-    def _get_data(self) -> Dict[str, Any]:
+    def _get_constructor_parameters(self) -> Dict[str, Any]:
         """
-        Get data that need to be saved in order to re-create the model.
-        This corresponds to the arguments of the constructor.
+        Get data that need to be saved in order to re-create the model when loading it from disk.
 
-        :return:
+        :return: The dictionary to pass to the as kwargs constructor when reconstruction this model.
         """
         return dict(
             observation_space=self.observation_space,
@@ -150,7 +149,7 @@ class BaseModel(nn.Module, ABC):
 
         :param path:
         """
-        th.save({"state_dict": self.state_dict(), "data": self._get_data()}, path)
+        th.save({"state_dict": self.state_dict(), "data": self._get_constructor_parameters()}, path)
 
     @classmethod
     def load(cls, path: str, device: Union[th.device, str] = "auto") -> "BaseModel":
@@ -204,7 +203,7 @@ class BasePolicy(BaseModel):
 
     @staticmethod
     def _dummy_schedule(progress_remaining: float) -> float:
-        """ (float) Useful for pickling policy."""
+        """(float) Useful for pickling policy."""
         del progress_remaining
         return 0.0
 
@@ -266,17 +265,7 @@ class BasePolicy(BaseModel):
 
         # Handle the different cases for images
         # as PyTorch use channel first format
-        if is_image_space(self.observation_space):
-            if not (
-                observation.shape == self.observation_space.shape or observation.shape[1:] == self.observation_space.shape
-            ):
-                # Try to re-order the channels
-                transpose_obs = VecTransposeImage.transpose_image(observation)
-                if (
-                    transpose_obs.shape == self.observation_space.shape
-                    or transpose_obs.shape[1:] == self.observation_space.shape
-                ):
-                    observation = transpose_obs
+        observation = maybe_transpose(observation, self.observation_space)
 
         vectorized_env = is_vectorized_observation(observation, self.observation_space)
 
@@ -364,7 +353,7 @@ class ActorCriticPolicy(BasePolicy):
         self,
         observation_space: gym.spaces.Space,
         action_space: gym.spaces.Space,
-        lr_schedule: Callable[[float], float],
+        lr_schedule: Schedule,
         net_arch: Optional[List[Union[int, Dict[str, List[int]]]]] = None,
         activation_fn: Type[nn.Module] = nn.Tanh,
         ortho_init: bool = True,
@@ -433,8 +422,8 @@ class ActorCriticPolicy(BasePolicy):
 
         self._build(lr_schedule)
 
-    def _get_data(self) -> Dict[str, Any]:
-        data = super()._get_data()
+    def _get_constructor_parameters(self) -> Dict[str, Any]:
+        data = super()._get_constructor_parameters()
 
         default_none_kwargs = self.dist_kwargs or collections.defaultdict(lambda: None)
 
@@ -446,7 +435,7 @@ class ActorCriticPolicy(BasePolicy):
                 log_std_init=self.log_std_init,
                 squash_output=default_none_kwargs["squash_output"],
                 full_std=default_none_kwargs["full_std"],
-                sde_net_arch=default_none_kwargs["sde_net_arch"],
+                sde_net_arch=self.sde_net_arch,
                 use_expln=default_none_kwargs["use_expln"],
                 lr_schedule=self._dummy_schedule,  # dummy lr schedule, not needed for loading policy alone
                 ortho_init=self.ortho_init,
@@ -479,7 +468,7 @@ class ActorCriticPolicy(BasePolicy):
             self.features_dim, net_arch=self.net_arch, activation_fn=self.activation_fn, device=self.device
         )
 
-    def _build(self, lr_schedule: Callable[[float], float]) -> None:
+    def _build(self, lr_schedule: Schedule) -> None:
         """
         Create the networks and the optimizer.
 
@@ -662,7 +651,7 @@ class ActorCriticCnnPolicy(ActorCriticPolicy):
         self,
         observation_space: gym.spaces.Space,
         action_space: gym.spaces.Space,
-        lr_schedule: Callable,
+        lr_schedule: Schedule,
         net_arch: Optional[List[Union[int, Dict[str, List[int]]]]] = None,
         activation_fn: Type[nn.Module] = nn.Tanh,
         ortho_init: bool = True,

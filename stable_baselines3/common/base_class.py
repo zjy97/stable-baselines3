@@ -5,7 +5,7 @@ import pathlib
 import time
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Type, Union
 
 import gym
 import numpy as np
@@ -13,12 +13,13 @@ import torch as th
 
 from stable_baselines3.common import logger, utils
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, ConvertCallback, EvalCallback
+from stable_baselines3.common.env_util import is_wrapped
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy, get_policy_from_name
-from stable_baselines3.common.preprocessing import is_image_space
+from stable_baselines3.common.preprocessing import is_image_space, is_image_space_channels_first
 from stable_baselines3.common.save_util import load_from_zip_file, recursive_getattr, recursive_setattr, save_to_zip_file
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import (
     check_for_correct_spaces,
     get_device,
@@ -31,17 +32,16 @@ from stable_baselines3.common.vec_env import (
     VecEnv,
     VecNormalize,
     VecTransposeImage,
-    is_wrapped,
+    is_vecenv_wrapped,
     unwrap_vec_normalize,
 )
 from stable_baselines3.common.vec_env.obs_dict_wrapper import ObsDictWrapper
 
 
-def maybe_make_env(env: Union[GymEnv, str, None], monitor_wrapper: bool, verbose: int) -> Optional[GymEnv]:
+def maybe_make_env(env: Union[GymEnv, str, None], verbose: int) -> Optional[GymEnv]:
     """If env is a string, make the environment; otherwise, return env.
 
     :param env: The environment to learn from.
-    :param monitor_wrapper: Whether to wrap env in a Monitor when creating env.
     :param verbose: logging verbosity
     :return A Gym (vector) environment.
     """
@@ -49,9 +49,6 @@ def maybe_make_env(env: Union[GymEnv, str, None], monitor_wrapper: bool, verbose
         if verbose >= 1:
             print(f"Creating environment from the given name '{env}'")
         env = gym.make(env)
-        if monitor_wrapper:
-            env = Monitor(env, filename=None)
-
     return env
 
 
@@ -82,6 +79,7 @@ class BaseAlgorithm(ABC):
         instead of action noise exploration (default: False)
     :param sde_sample_freq: Sample a new noise matrix every n steps when using gSDE
         Default: -1 (only sample at the beginning of the rollout)
+    :param supported_action_spaces: The action spaces supported by the algorithm.
     """
 
     def __init__(
@@ -89,7 +87,7 @@ class BaseAlgorithm(ABC):
         policy: Type[BasePolicy],
         env: Union[GymEnv, str, None],
         policy_base: Type[BasePolicy],
-        learning_rate: Union[float, Callable],
+        learning_rate: Union[float, Schedule],
         policy_kwargs: Dict[str, Any] = None,
         tensorboard_log: Optional[str] = None,
         verbose: int = 0,
@@ -100,6 +98,7 @@ class BaseAlgorithm(ABC):
         seed: Optional[int] = None,
         use_sde: bool = False,
         sde_sample_freq: int = -1,
+        supported_action_spaces: Optional[Tuple[gym.spaces.Space, ...]] = None,
     ):
 
         if isinstance(policy, str) and policy_base is not None:
@@ -129,9 +128,9 @@ class BaseAlgorithm(ABC):
         self.policy = None
         self.learning_rate = learning_rate
         self.tensorboard_log = tensorboard_log
-        self.lr_schedule = None  # type: Optional[Callable]
+        self.lr_schedule = None  # type: Optional[Schedule]
         self._last_obs = None  # type: Optional[np.ndarray]
-        self._last_dones = None  # type: Optional[np.ndarray]
+        self._last_episode_starts = None  # type: Optional[np.ndarray]
         # When using VecNormalize:
         self._last_original_obs = None  # type: Optional[np.ndarray]
         self._episode_num = 0
@@ -144,39 +143,63 @@ class BaseAlgorithm(ABC):
         # Buffers for logging
         self.ep_info_buffer = None  # type: Optional[deque]
         self.ep_success_buffer = None  # type: Optional[deque]
-        # For logging
+        # For logging (and TD3 delayed updates)
         self._n_updates = 0  # type: int
 
         # Create and wrap the env if needed
         if env is not None:
             if isinstance(env, str):
                 if create_eval_env:
-                    self.eval_env = maybe_make_env(env, monitor_wrapper, self.verbose)
+                    self.eval_env = maybe_make_env(env, self.verbose)
 
-            env = maybe_make_env(env, monitor_wrapper, self.verbose)
-            env = self._wrap_env(env, self.verbose)
+            env = maybe_make_env(env, self.verbose)
+            env = self._wrap_env(env, self.verbose, monitor_wrapper)
 
             self.observation_space = env.observation_space
             self.action_space = env.action_space
             self.n_envs = env.num_envs
             self.env = env
 
+            if supported_action_spaces is not None:
+                assert isinstance(self.action_space, supported_action_spaces), (
+                    f"The algorithm only supports {supported_action_spaces} as action spaces "
+                    f"but {self.action_space} was provided"
+                )
+
             if not support_multi_env and self.n_envs > 1:
                 raise ValueError(
                     "Error: the model does not support multiple envs; it requires " "a single vectorized environment."
                 )
 
-        if self.use_sde and not isinstance(self.action_space, gym.spaces.Box):
-            raise ValueError("generalized State-Dependent Exploration (gSDE) can only be used with continuous actions.")
+            if self.use_sde and not isinstance(self.action_space, gym.spaces.Box):
+                raise ValueError("generalized State-Dependent Exploration (gSDE) can only be used with continuous actions.")
 
     @staticmethod
-    def _wrap_env(env: GymEnv, verbose: int = 0) -> VecEnv:
+    def _wrap_env(env: GymEnv, verbose: int = 0, monitor_wrapper: bool = True) -> VecEnv:
+        """ "
+        Wrap environment with the appropriate wrappers if needed.
+        For instance, to have a vectorized environment
+        or to re-order the image channels.
+
+        :param env:
+        :param verbose:
+        :param monitor_wrapper: Whether to wrap the env in a ``Monitor`` when possible.
+        :return: The wrapped environment.
+        """
         if not isinstance(env, VecEnv):
+            if not is_wrapped(env, Monitor) and monitor_wrapper:
+                if verbose >= 1:
+                    print("Wrapping the env with a `Monitor` wrapper")
+                env = Monitor(env)
             if verbose >= 1:
                 print("Wrapping the env in a DummyVecEnv.")
             env = DummyVecEnv([lambda: env])
 
-        if is_image_space(env.observation_space) and not is_wrapped(env, VecTransposeImage):
+        if (
+            is_image_space(env.observation_space)
+            and not is_vecenv_wrapped(env, VecTransposeImage)
+            and not is_image_space_channels_first(env.observation_space)
+        ):
             if verbose >= 1:
                 print("Wrapping the env in a VecTransposeImage.")
             env = VecTransposeImage(env)
@@ -353,8 +376,8 @@ class BaseAlgorithm(ABC):
 
         # Avoid resetting the environment when calling ``.learn()`` consecutive times
         if reset_num_timesteps or self._last_obs is None:
-            self._last_obs = self.env.reset()
-            self._last_dones = np.zeros((self.env.num_envs,), dtype=np.bool)
+            self._last_obs = self.env.reset()  # pytype: disable=annotation-type-mismatch
+            self._last_episode_starts = np.ones((self.env.num_envs,), dtype=bool)
             # Retrieve unnormalized observation for saving into the buffer
             if self._vec_normalize_env is not None:
                 self._last_original_obs = self._vec_normalize_env.get_original_obs()
@@ -374,10 +397,11 @@ class BaseAlgorithm(ABC):
 
     def _update_info_buffer(self, infos: List[Dict[str, Any]], dones: Optional[np.ndarray] = None) -> None:
         """
-        Retrieve reward and episode length and update the buffer
-        if using Monitor wrapper.
+        Retrieve reward, episode length, episode success and update the buffer
+        if using Monitor wrapper or a GoalEnv.
 
-        :param infos:
+        :param infos: List of additional information about the transition.
+        :param dones: Termination signals
         """
         if dones is None:
             dones = np.array([False] * len(infos))
@@ -562,6 +586,7 @@ class BaseAlgorithm(ABC):
         path: Union[str, pathlib.Path, io.BufferedIOBase],
         env: Optional[GymEnv] = None,
         device: Union[th.device, str] = "auto",
+        custom_objects: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> "BaseAlgorithm":
         """
@@ -572,9 +597,15 @@ class BaseAlgorithm(ABC):
         :param env: the new environment to run the loaded model on
             (can be None if you only need prediction from a trained model) has priority over any saved environment
         :param device: Device on which the code should run.
+        :param custom_objects: Dictionary of objects to replace
+            upon loading. If a variable is present in this dictionary as a
+            key, it will not be deserialized and the corresponding item
+            will be used instead. Similar to custom_objects in
+            ``keras.models.load_model``. Useful when you have an object in
+            file that can not be deserialized.
         :param kwargs: extra arguments to change the model when loading
         """
-        data, params, pytorch_variables = load_from_zip_file(path, device=device)
+        data, params, pytorch_variables = load_from_zip_file(path, device=device, custom_objects=custom_objects)
 
         # Remove stored device information and replace with ours
         if "policy_kwargs" in data:
@@ -601,7 +632,7 @@ class BaseAlgorithm(ABC):
                 env = data["env"]
 
         # noinspection PyArgumentList
-        model = cls(
+        model = cls(  # pytype: disable=not-instantiable,wrong-keyword-args
             policy=data["policy_class"],
             env=env,
             device=device,
@@ -619,7 +650,9 @@ class BaseAlgorithm(ABC):
         # put other pytorch variables back in place
         if pytorch_variables is not None:
             for name in pytorch_variables:
-                recursive_setattr(model, name, pytorch_variables[name])
+                # Set the data attribute directly to avoid issue when using optimizers
+                # See https://github.com/DLR-RM/stable-baselines3/issues/391
+                recursive_setattr(model, name + ".data", pytorch_variables[name].data)
 
         # Sample gSDE exploration matrix, so it uses the right device
         # see issue #44

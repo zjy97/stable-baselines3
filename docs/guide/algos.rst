@@ -33,6 +33,10 @@ Actions ``gym.spaces``:
 
 .. note::
 
+  More algorithms (like QR-DQN or TQC) are implemented in our :ref:`contrib repo <sb3_contrib>`.
+
+.. note::
+
   Some logging values (like ``ep_rew_mean``, ``ep_len_mean``) are only available when using a ``Monitor`` wrapper
   See `Issue #339 <https://github.com/hill-a/stable-baselines/issues/339>`_ for more info.
 
@@ -40,7 +44,7 @@ Actions ``gym.spaces``:
 Reproducibility
 ---------------
 
-Completely reproducible results are not guaranteed across Tensorflow releases or different platforms.
+Completely reproducible results are not guaranteed across PyTorch releases or different platforms.
 Furthermore, results need not be reproducible between CPU and GPU executions, even when using identical seeds.
 
 In order to make computations deterministics, on your specific problem on one specific platform,

@@ -10,6 +10,7 @@ import torch as th
 
 from stable_baselines3 import DDPG, DQN, HER, SAC, TD3
 from stable_baselines3.common.bit_flipping_env import BitFlippingEnv
+from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.vec_env.obs_dict_wrapper import ObsDictWrapper
 from stable_baselines3.her.goal_selection_strategy import GoalSelectionStrategy
@@ -32,8 +33,7 @@ def test_her(model_class, online_sampling):
         goal_selection_strategy="future",
         online_sampling=online_sampling,
         gradient_steps=1,
-        train_freq=1,
-        n_episodes_rollout=-1,
+        train_freq=4,
         max_episode_length=n_bits,
         policy_kwargs=dict(net_arch=[64]),
         learning_starts=100,
@@ -60,6 +60,8 @@ def test_goal_selection_strategy(goal_selection_strategy, online_sampling):
     """
     env = BitFlippingEnv(continuous=True)
 
+    normal_action_noise = NormalActionNoise(np.zeros(1), 0.1 * np.ones(1))
+
     model = HER(
         "MlpPolicy",
         env,
@@ -67,12 +69,13 @@ def test_goal_selection_strategy(goal_selection_strategy, online_sampling):
         goal_selection_strategy=goal_selection_strategy,
         online_sampling=online_sampling,
         gradient_steps=1,
-        train_freq=1,
-        n_episodes_rollout=-1,
+        train_freq=4,
         max_episode_length=10,
         policy_kwargs=dict(net_arch=[64]),
         learning_starts=100,
+        action_noise=normal_action_noise,
     )
+    assert model.action_noise is not None
     model.learn(total_timesteps=300)
 
 
@@ -109,7 +112,6 @@ def test_save_load(tmp_path, model_class, use_sde, online_sampling):
         gradient_steps=1,
         train_freq=4,
         learning_starts=100,
-        n_episodes_rollout=-1,
         max_episode_length=n_bits,
         **kwargs
     )
@@ -147,6 +149,17 @@ def test_save_load(tmp_path, model_class, use_sde, online_sampling):
     # Check
     model.save(tmp_path / "test_save.zip")
     del model
+
+    # test custom_objects
+    # Load with custom objects
+    custom_objects = dict(learning_rate=2e-5, dummy=1.0)
+    model_ = HER.load(str(tmp_path / "test_save.zip"), env=env, custom_objects=custom_objects, verbose=2)
+    assert model_.verbose == 2
+    # Check that the custom object was taken into account
+    assert model_.learning_rate == custom_objects["learning_rate"]
+    # Check that only parameters that are here already are replaced
+    assert not hasattr(model_, "dummy")
+
     model = HER.load(str(tmp_path / "test_save.zip"), env=env)
 
     # check if params are still the same after load
@@ -172,7 +185,7 @@ def test_save_load(tmp_path, model_class, use_sde, online_sampling):
     os.remove(tmp_path / "test_save.zip")
 
 
-@pytest.mark.parametrize("online_sampling, truncate_last_trajectory", [(False, None), (True, True), (True, False)])
+@pytest.mark.parametrize("online_sampling, truncate_last_trajectory", [(False, False), (True, True), (True, False)])
 def test_save_load_replay_buffer(tmp_path, recwarn, online_sampling, truncate_last_trajectory):
     """
     Test if 'save_replay_buffer' and 'load_replay_buffer' works correctly
@@ -191,8 +204,7 @@ def test_save_load_replay_buffer(tmp_path, recwarn, online_sampling, truncate_la
         goal_selection_strategy="future",
         online_sampling=online_sampling,
         gradient_steps=1,
-        train_freq=1,
-        n_episodes_rollout=-1,
+        train_freq=4,
         max_episode_length=4,
         buffer_size=int(2e4),
         policy_kwargs=dict(net_arch=[64]),
@@ -248,6 +260,33 @@ def test_save_load_replay_buffer(tmp_path, recwarn, online_sampling, truncate_la
     # test if continuing training works properly
     reset_num_timesteps = False if truncate_last_trajectory is False else True
     model.learn(200, reset_num_timesteps=reset_num_timesteps)
+
+
+def test_full_replay_buffer():
+    """
+    Test if HER works correctly with a full replay buffer when using online sampling.
+    It should not sample the current episode which is not finished.
+    """
+    n_bits = 4
+    env = BitFlippingEnv(n_bits=n_bits, continuous=True)
+
+    # use small buffer size to get the buffer full
+    model = HER(
+        "MlpPolicy",
+        env,
+        SAC,
+        goal_selection_strategy="future",
+        online_sampling=True,
+        gradient_steps=1,
+        train_freq=4,
+        max_episode_length=n_bits,
+        policy_kwargs=dict(net_arch=[64]),
+        learning_starts=1,
+        buffer_size=20,
+        verbose=1,
+    )
+
+    model.learn(total_timesteps=100)
 
 
 def test_get_max_episode_length():

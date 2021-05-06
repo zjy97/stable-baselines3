@@ -14,7 +14,7 @@ It uses multiple workers to avoid the use of a replay buffer.
 
   If you find training unstable or want to match performance of stable-baselines A2C, consider using
   ``RMSpropTFLike`` optimizer from ``stable_baselines3.common.sb2_compat.rmsprop_tf_like``.
-  You can change optimizer with ``A2C(policy_kwargs=dict(optimizer_class=RMSpropTFLike))``.
+  You can change optimizer with ``A2C(policy_kwargs=dict(optimizer_class=RMSpropTFLike, eps=1e-5))``.
   Read more `here <https://github.com/DLR-RM/stable-baselines3/pull/110#issuecomment-663255241>`_.
 
 
@@ -53,13 +53,12 @@ Train a A2C agent on ``CartPole-v1`` using 4 environments.
   import gym
 
   from stable_baselines3 import A2C
-  from stable_baselines3.a2c import MlpPolicy
   from stable_baselines3.common.env_util import make_vec_env
 
   # Parallel environments
-  env = make_vec_env('CartPole-v1', n_envs=4)
+  env = make_vec_env("CartPole-v1", n_envs=4)
 
-  model = A2C(MlpPolicy, env, verbose=1)
+  model = A2C("MlpPolicy", env, verbose=1)
   model.learn(total_timesteps=25000)
   model.save("a2c_cartpole")
 

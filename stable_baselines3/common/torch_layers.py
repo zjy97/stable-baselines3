@@ -65,8 +65,11 @@ class NatureCNN(BaseFeaturesExtractor):
         # Re-ordering will be done by pre-preprocessing or wrapper
         assert is_image_space(observation_space), (
             "You should use NatureCNN "
-            f"only with images not with {observation_space} "
-            "(you are probably using `CnnPolicy` instead of `MlpPolicy`)"
+            f"only with images not with {observation_space}\n"
+            "(you are probably using `CnnPolicy` instead of `MlpPolicy`)\n"
+            "If you are using a custom environment,\n"
+            "please check it using our env checker:\n"
+            "https://stable-baselines3.readthedocs.io/en/master/common/env_checker.html"
         )
         n_input_channels = observation_space.shape[0]
         self.cnn = nn.Sequential(
@@ -167,7 +170,7 @@ class MlpExtractor(nn.Module):
         last_layer_dim_shared = feature_dim
 
         # Iterate through the shared layers and build the shared parts of the network
-        for idx, layer in enumerate(net_arch):
+        for layer in net_arch:
             if isinstance(layer, int):  # Check that this is a shared layer
                 layer_size = layer
                 # TODO: give layer a meaningful name
@@ -189,7 +192,7 @@ class MlpExtractor(nn.Module):
         last_layer_dim_vf = last_layer_dim_shared
 
         # Build the non-shared part of the network
-        for idx, (pi_layer_size, vf_layer_size) in enumerate(zip_longest(policy_only_layers, value_only_layers)):
+        for pi_layer_size, vf_layer_size in zip_longest(policy_only_layers, value_only_layers):
             if pi_layer_size is not None:
                 assert isinstance(pi_layer_size, int), "Error: net_arch[-1]['pi'] must only contain integers."
                 policy_net.append(nn.Linear(last_layer_dim_pi, pi_layer_size))

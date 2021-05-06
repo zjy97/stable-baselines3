@@ -10,7 +10,7 @@ long_description = """
 
 # Stable Baselines3
 
-Stable Baselines3 is a set of improved implementations of reinforcement learning algorithms in PyTorch. It is the next major version of [Stable Baselines](https://github.com/hill-a/stable-baselines).
+Stable Baselines3 is a set of reliable implementations of reinforcement learning algorithms in PyTorch. It is the next major version of [Stable Baselines](https://github.com/hill-a/stable-baselines).
 
 These algorithms will make it easier for the research community and industry to replicate, refine, and identify new ideas, and will create good baselines to build projects on top of. We expect these tools will be used as a base around which new ideas can be added, and as a tool for comparing a new approach against existing ones. We also hope that the simplicity of these tools will allow beginners to experiment with a more advanced toolset, without being buried in implementation details.
 
@@ -20,14 +20,17 @@ These algorithms will make it easier for the research community and industry to 
 Repository:
 https://github.com/DLR-RM/stable-baselines3
 
-Medium article:
-https://medium.com/@araffin/df87c4b2fc82
+Blog post:
+https://araffin.github.io/post/sb3/
 
 Documentation:
 https://stable-baselines3.readthedocs.io/en/master/
 
 RL Baselines3 Zoo:
 https://github.com/DLR-RM/rl-baselines3-zoo
+
+SB3 Contrib:
+https://github.com/Stable-Baselines-Team/stable-baselines3-contrib
 
 ## Quick example
 
@@ -91,6 +94,8 @@ setup(
             "pytype",
             # Lint code
             "flake8>=3.8",
+            # Find likely bugs
+            "flake8-bugbear",
             # Sort imports
             "isort>=5.0",
             # Reformat
@@ -112,7 +117,7 @@ setup(
             "atari_py~=0.2.0",
             "pillow",
             # Tensorboard support
-            "tensorboard",
+            "tensorboard>=2.2.0",
             # Checking memory taken by replay buffer
             "psutil",
         ],
